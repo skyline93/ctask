@@ -4,6 +4,7 @@ import (
 	"context"
 	"ctask"
 	"encoding/json"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -30,20 +31,10 @@ func main() {
 		panic(err)
 	}
 
-	task := ctask.NewTask("emailTask", v)
-
-	if err := broker.EnqueueOneTask("default", task); err != nil {
-		panic(err)
+	for i := 0; i < 500; i++ {
+		task := ctask.NewTask("emailTask", v)
+		if err := broker.EnqueueOneTask("default", task, time.Second*60*5); err != nil {
+			panic(err)
+		}
 	}
-
-	// t, err := broker.DequeueOneTask("default")
-	// if err != nil {
-	// 	panic(err)
-	// }
-
-	// fmt.Printf("task: %v", t)
-
-	// if err = broker.FailOneTask("default", "40e87fa3-7cf7-42d9-a556-d1667f63d7af"); err != nil {
-	// 	panic(err)
-	// }
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -42,15 +43,21 @@ func (b *RDSBroker) InitQueues(queues ...string) error {
 }
 
 var enqueueOneCmd = redis.NewScript(`
+if redis.call("EXISTS", KEYS[1]) == 1 then
+	return -1
+end
+
 redis.call("HSET", KEYS[1],
 		   "id", ARGV[1],
 		   "name", ARGV[2],
-		   "params", ARGV[3])
-redis.call("ZADD", KEYS[2], ARGV[4], ARGV[5])
+		   "params", ARGV[3],
+		   "retention", ARGV[4],
+		   "state", "queued")
+redis.call("ZADD", KEYS[2], ARGV[5], ARGV[6])
 return 0
 `)
 
-func (b *RDSBroker) EnqueueOneTask(queue string, task *Task) error {
+func (b *RDSBroker) EnqueueOneTask(queue string, task *Task, retention time.Duration) error {
 	keys := []string{
 		fmt.Sprintf("%s:{%s}:task:%s", globPrefix, queue, task.ID),
 		fmt.Sprintf("%s:{%s}:%s", globPrefix, queue, TaskStatusQueue),
@@ -59,11 +66,17 @@ func (b *RDSBroker) EnqueueOneTask(queue string, task *Task) error {
 		task.ID,
 		task.Name,
 		task.Params,
+		retention,
 		float64(time.Now().Unix()),
 		task.ID,
 	}
-	if _, err := enqueueOneCmd.Run(b.ctx, b.rds.client, keys, args...).Result(); err != nil {
+	result, err := enqueueOneCmd.Run(b.ctx, b.rds.client, keys, args...).Result()
+	if err != nil {
 		return err
+	}
+
+	if result.(int64) == -1 {
+		return errors.New("task exists already")
 	}
 
 	return nil
@@ -78,7 +91,9 @@ local mem = redis.call("ZPOPMIN", KEYS[1])
 redis.call("ZADD", KEYS[2], ARGV[1], mem[1])
 
 local key = ARGV[2] .. mem[1]
-local result = redis.call("HMGET", key, "id", "name", "params")
+redis.call("HSET", key,
+           "state", "running")
+local result = redis.call("HMGET", key, "id", "name", "params", "retention", "state")
 
 return result
 `)
@@ -105,10 +120,17 @@ func (b *RDSBroker) DequeueOneTask(queue string) (*Task, error) {
 
 	res := result.([]interface{})
 
+	retention, err := strconv.ParseInt(res[3].(string), 10, 64)
+	if err != nil {
+		return nil, err
+	}
+
 	return &Task{
-		ID:     res[0].(string),
-		Name:   res[1].(string),
-		Params: []byte(res[2].(string)),
+		ID:        res[0].(string),
+		Name:      res[1].(string),
+		Params:    []byte(res[2].(string)),
+		Retention: time.Duration(retention),
+		State:     res[4].(string),
 	}, nil
 }
 
@@ -118,20 +140,22 @@ if redis.call("ZSCORE", KEYS[1], ARGV[1]) == false then
 end
 
 redis.call("ZREM", KEYS[1], ARGV[1])
-redis.call("ZADD", KEYS[2], ARGV[2], ARGV[1])
-
+redis.call("HSET", KEYS[2],
+           "state", ARGV[2])
+redis.call("EXPIREAT", KEYS[2], ARGV[3])
 return 0
 `)
 
-func (b *RDSBroker) completeOnTask(queue string, taskId string, status string) error {
+func (b *RDSBroker) completeOnTask(queue string, taskId string, status string, expireat time.Time) error {
 	keys := []string{
 		fmt.Sprintf("%s:{%s}:%s", globPrefix, queue, TaskStatusRunning),
-		fmt.Sprintf("%s:{%s}:%s", globPrefix, queue, status),
+		fmt.Sprintf("%s:{%s}:task:%s", globPrefix, queue, taskId),
 	}
 
 	args := []interface{}{
 		taskId,
-		float64(time.Now().Unix()),
+		status,
+		expireat.Unix(),
 	}
 
 	result, err := completeOneCmd.Run(b.ctx, b.rds.client, keys, args...).Result()
@@ -146,10 +170,10 @@ func (b *RDSBroker) completeOnTask(queue string, taskId string, status string) e
 	return nil
 }
 
-func (b *RDSBroker) SucceedOneTask(queue string, taskId string) error {
-	return b.completeOnTask(queue, taskId, TaskStatusSucceeded)
+func (b *RDSBroker) SucceedOneTask(queue string, taskId string, expireat time.Time) error {
+	return b.completeOnTask(queue, taskId, TaskStatusSucceeded, expireat)
 }
 
-func (b *RDSBroker) FailOneTask(queue string, taskId string) error {
-	return b.completeOnTask(queue, taskId, TaskStatusFailed)
+func (b *RDSBroker) FailOneTask(queue string, taskId string, expireat time.Time) error {
+	return b.completeOnTask(queue, taskId, TaskStatusFailed, expireat)
 }

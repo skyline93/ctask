@@ -14,7 +14,7 @@ var taskName = "emailTask"
 func HandleEmailTask(ctx context.Context, t *ctask.Task) error {
 
 	fmt.Printf("handle email task...\n")
-	time.Sleep(time.Second * 5)
+	time.Sleep(time.Second * 3)
 	return nil
 }
 
@@ -25,7 +25,7 @@ func main() {
 		DB:   0,
 	})
 
-	srv := ctask.NewServer(broker)
+	srv := ctask.NewServer(broker, 100)
 	srv.HandleFunc(taskName, HandleEmailTask)
 
 	srv.Run(ctx)

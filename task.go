@@ -1,6 +1,10 @@
 package ctask
 
-import "github.com/google/uuid"
+import (
+	"time"
+
+	"github.com/google/uuid"
+)
 
 const (
 	TaskStatusQueue     = "queued"
@@ -10,9 +14,11 @@ const (
 )
 
 type Task struct {
-	ID     string
-	Name   string
-	Params []byte
+	ID        string
+	Name      string
+	Params    []byte
+	Retention time.Duration
+	State     string
 }
 
 func NewTask(name string, params []byte) *Task {

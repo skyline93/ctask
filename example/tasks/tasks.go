@@ -2,22 +2,38 @@ package tasks
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/skyline93/ctask"
 )
 
-var TaskName = "emailTask"
+const (
+	TypeEmailDelivery = "email:deliver"
+)
 
-type EmailTaskPayload struct {
-	JobID      string `json:"job_id"`
-	OtherParam string `json:"other_param"`
+type EmailDeliveryPayload struct {
+	UserID     int
+	TemplateID string
 }
 
-func HandleEmailTask(ctx context.Context, t *ctask.Task) error {
+func NewEmailDeliveryTask(userID int, tmplID string) (*ctask.Task, error) {
+	payload, err := json.Marshal(EmailDeliveryPayload{UserID: userID, TemplateID: tmplID})
+	if err != nil {
+		return nil, err
+	}
+	return ctask.NewTask(TypeEmailDelivery, payload), nil
+}
 
-	fmt.Printf("handle email task...\n")
-	time.Sleep(time.Second * 5)
+func HandleEmailDeliveryTask(ctx context.Context, t *ctask.Task) error {
+	var p EmailDeliveryPayload
+	if err := json.Unmarshal(t.Payload(), &p); err != nil {
+		return fmt.Errorf("json.Unmarshal failed: %v", err)
+	}
+	log.Printf("Sending Email to User: user_id=%d, template_id=%s", p.UserID, p.TemplateID)
+
+	time.Sleep(time.Second * 30)
 	return nil
 }

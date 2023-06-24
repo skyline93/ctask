@@ -1,19 +1,21 @@
 package ctask
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 type Broker interface {
-	EnqueueTask(task *Task, retention time.Duration, queue Queue) error
-	DequeueTask(queues ...Queue) (*Task, error)
-	SucceedTask(taskId string, expireat time.Time, queue Queue) error
-	FailTask(taskId string, expireat time.Time, queue Queue) error
+	Enqueue(ctx context.Context, msg *TaskMessage) error
+	Dequeue(qnames ...string) (*TaskMessage, error)
+	SucceedTask(taskId string, expireat time.Time, qname string) error
+	FailTask(taskId string, expireat time.Time, qnmae string) error
 }
 
-type Queue struct {
-	Name     string
-	priority int
-}
-
-func (q Queue) String() string {
-	return q.Name
+type TaskMessage struct {
+	ID        string
+	Type      string
+	Payload   []byte
+	Queue     string
+	Retention int64
 }

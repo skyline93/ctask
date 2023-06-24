@@ -1,10 +1,6 @@
 package ctask
 
-import (
-	"time"
-
-	"github.com/google/uuid"
-)
+import "time"
 
 const (
 	TaskStatusQueue     = "queued"
@@ -14,14 +10,32 @@ const (
 )
 
 type Task struct {
-	ID        string
-	Name      string
-	Params    []byte
-	Retention time.Duration
-	State     string
-	Queue     Queue
+	typename string
+	payload  []byte
+	opts     []Option
 }
 
-func NewTask(name string, params []byte) *Task {
-	return &Task{ID: uuid.New().String(), Name: name, Params: params}
+func (t *Task) Payload() []byte { return t.payload }
+func (t *Task) Type() string    { return t.typename }
+
+func NewTask(typename string, payload []byte, opts ...Option) *Task {
+	return &Task{
+		typename: typename,
+		payload:  payload,
+		opts:     opts,
+	}
+}
+
+func newTask(typename string, payload []byte) *Task {
+	return &Task{
+		typename: typename,
+		payload:  payload,
+	}
+}
+
+type TaskInfo struct {
+	ID        string
+	Type      string
+	Queue     string
+	Retention time.Duration
 }

@@ -2,12 +2,13 @@ package main
 
 import (
 	"context"
-	"encoding/json"
+	"log"
 	"time"
+
+	"app/tasks"
 
 	"github.com/redis/go-redis/v9"
 	"github.com/skyline93/ctask"
-	"app/tasks"
 )
 
 func main() {
@@ -17,33 +18,22 @@ func main() {
 		DB:   0,
 	})
 
-	payload := tasks.EmailTaskPayload{
-		JobID:      "123456789",
-		OtherParam: "hello world",
-	}
+	client := ctask.NewClient(broker)
 
-	v, err := json.Marshal(payload)
+	task, err := tasks.NewEmailDeliveryTask(42, "some:template:id")
 	if err != nil {
-		panic(err)
+		log.Fatalf("could not create task: %v", err)
 	}
 
-	for i := 0; i < 100; i++ {
-		task := ctask.NewTask("emailTask", v)
-		if err := broker.EnqueueTask(task, time.Second*60*5, ctask.Queue{Name: "default"}); err != nil {
-			panic(err)
-		}
-	}
-
-	for i := 0; i < 100; i++ {
-		task := ctask.NewTask("emailTask", v)
-		if err := broker.EnqueueTask(task, time.Second*60*5, ctask.Queue{Name: "low"}); err != nil {
-			panic(err)
-		}
-	}
-	for i := 0; i < 100; i++ {
-		task := ctask.NewTask("emailTask", v)
-		if err := broker.EnqueueTask(task, time.Second*60*5, ctask.Queue{Name: "critical"}); err != nil {
-			panic(err)
+	queues := []string{"critical", "default", "low"}
+	for _, qname := range queues {
+		for i := 0; i < 10; i++ {
+			info, err := client.Enqueue(ctx, task, ctask.Queue(qname), ctask.Retention(time.Second*60))
+			if err != nil {
+				log.Fatalf("could not enqueue task: %v", err)
+				return
+			}
+			log.Printf("enqueued task: id=%s queue=%s", info.ID, info.Queue)
 		}
 	}
 }

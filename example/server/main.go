@@ -16,14 +16,14 @@ func main() {
 	})
 
 	srv := ctask.NewServer(broker, ctask.Config{
-		Concurrency: 50,
+		Concurrency: 5,
 		Queues: map[string]int{
 			"critical": 6,
 			"default":  3,
 			"low":      1,
 		},
 	})
-	srv.HandleFunc(tasks.TaskName, tasks.HandleEmailTask)
+	srv.HandleFunc(tasks.TypeEmailDelivery, tasks.HandleEmailDeliveryTask)
 
 	srv.Run(ctx)
 }

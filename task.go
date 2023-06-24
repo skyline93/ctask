@@ -19,6 +19,7 @@ type Task struct {
 	Params    []byte
 	Retention time.Duration
 	State     string
+	Queue     Queue
 }
 
 func NewTask(name string, params []byte) *Task {

@@ -10,7 +10,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-const globPrefix = "worker"
+const globPrefix = "ctask"
 
 type RDS struct {
 	client *redis.Client
@@ -31,17 +31,6 @@ func NewRDSBroker(ctx context.Context, opt *redis.Options) *RDSBroker {
 	return &RDSBroker{ctx: ctx, rds: rds}
 }
 
-func (b *RDSBroker) InitQueues(queues ...string) error {
-	for _, q := range queues {
-		k := fmt.Sprintf("%s:queue", globPrefix)
-		if cmd := b.rds.client.SAdd(b.ctx, k, q); cmd.Err() != nil {
-			return cmd.Err()
-		}
-	}
-
-	return nil
-}
-
 var enqueueOneCmd = redis.NewScript(`
 if redis.call("EXISTS", KEYS[1]) == 1 then
 	return -1
@@ -57,7 +46,7 @@ redis.call("ZADD", KEYS[2], ARGV[5], ARGV[6])
 return 0
 `)
 
-func (b *RDSBroker) EnqueueOneTask(queue string, task *Task, retention time.Duration) error {
+func (b *RDSBroker) EnqueueTask(task *Task, retention time.Duration, queue Queue) error {
 	keys := []string{
 		fmt.Sprintf("%s:{%s}:task:%s", globPrefix, queue, task.ID),
 		fmt.Sprintf("%s:{%s}:%s", globPrefix, queue, TaskStatusQueue),
@@ -98,7 +87,7 @@ local result = redis.call("HMGET", key, "id", "name", "params", "retention", "st
 return result
 `)
 
-func (b *RDSBroker) DequeueOneTask(queue string) (*Task, error) {
+func (b *RDSBroker) dequeueTask(queue Queue) (*Task, error) {
 	keys := []string{
 		fmt.Sprintf("%s:{%s}:%s", globPrefix, queue, TaskStatusQueue),
 		fmt.Sprintf("%s:{%s}:%s", globPrefix, queue, TaskStatusRunning),
@@ -131,7 +120,27 @@ func (b *RDSBroker) DequeueOneTask(queue string) (*Task, error) {
 		Params:    []byte(res[2].(string)),
 		Retention: time.Duration(retention),
 		State:     res[4].(string),
+		Queue:     queue,
 	}, nil
+}
+
+var ErrEmptyQueue = errors.New("empty queue")
+
+func (b *RDSBroker) DequeueTask(queues ...Queue) (*Task, error) {
+	for _, q := range queues {
+		task, err := b.dequeueTask(q)
+		if err != nil {
+			return nil, fmt.Errorf("dequeue task error, err: %s", err)
+		}
+
+		if task == nil {
+			continue
+		}
+
+		return task, nil
+	}
+
+	return nil, ErrEmptyQueue
 }
 
 var completeOneCmd = redis.NewScript(`
@@ -146,7 +155,7 @@ redis.call("EXPIREAT", KEYS[2], ARGV[3])
 return 0
 `)
 
-func (b *RDSBroker) completeOnTask(queue string, taskId string, status string, expireat time.Time) error {
+func (b *RDSBroker) completeTask(taskId string, status string, expireat time.Time, queue Queue) error {
 	keys := []string{
 		fmt.Sprintf("%s:{%s}:%s", globPrefix, queue, TaskStatusRunning),
 		fmt.Sprintf("%s:{%s}:task:%s", globPrefix, queue, taskId),
@@ -170,10 +179,10 @@ func (b *RDSBroker) completeOnTask(queue string, taskId string, status string, e
 	return nil
 }
 
-func (b *RDSBroker) SucceedOneTask(queue string, taskId string, expireat time.Time) error {
-	return b.completeOnTask(queue, taskId, TaskStatusSucceeded, expireat)
+func (b *RDSBroker) SucceedTask(taskId string, expireat time.Time, queue Queue) error {
+	return b.completeTask(taskId, TaskStatusSucceeded, expireat, queue)
 }
 
-func (b *RDSBroker) FailOneTask(queue string, taskId string, expireat time.Time) error {
-	return b.completeOnTask(queue, taskId, TaskStatusFailed, expireat)
+func (b *RDSBroker) FailTask(taskId string, expireat time.Time, queue Queue) error {
+	return b.completeTask(taskId, TaskStatusFailed, expireat, queue)
 }

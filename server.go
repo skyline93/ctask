@@ -2,21 +2,39 @@ package ctask
 
 import (
 	"context"
+	"errors"
 	"log"
+	"sort"
 	"time"
 )
+
+type Config struct {
+	Concurrency int
+	Queues      map[string]int
+}
 
 type Server struct {
 	broker Broker
 	mux    map[string]func(context.Context, *Task) error
 	sema   chan struct{}
+	queues []Queue
 }
 
-func NewServer(broker Broker, concurrency int) *Server {
+func NewServer(broker Broker, cfg Config) *Server {
+	var queues []Queue
+	for qname, priority := range cfg.Queues {
+		queues = append(queues, Queue{Name: qname, priority: priority})
+	}
+
+	sort.Slice(queues, func(i, j int) bool {
+		return queues[i].priority > queues[j].priority
+	})
+
 	return &Server{
 		broker: broker,
 		mux:    make(map[string]func(context.Context, *Task) error),
-		sema:   make(chan struct{}, concurrency),
+		sema:   make(chan struct{}, cfg.Concurrency),
+		queues: queues,
 	}
 }
 
@@ -29,16 +47,16 @@ func (s *Server) Run(ctx context.Context) {
 	for {
 		select {
 		case s.sema <- struct{}{}:
-			task, err := s.broker.DequeueOneTask("default")
-			if err != nil {
+			task, err := s.broker.DequeueTask(s.queues...)
+			if err != nil && !errors.Is(err, ErrEmptyQueue) {
 				log.Printf("dequeue task error, err: %s", err)
 				<-s.sema
-				continue
-			}
-			if task == nil {
+				break
+			} else if errors.Is(err, ErrEmptyQueue) {
 				<-s.sema
 				continue
 			}
+
 			handler := s.mux[task.Name]
 
 			go func() {
@@ -50,6 +68,7 @@ func (s *Server) Run(ctx context.Context) {
 			}()
 		case <-ctx.Done():
 			log.Print("stop server")
+			return
 		}
 	}
 }
@@ -66,10 +85,10 @@ func (s *Server) handle(ctx context.Context, task *Task, handler func(context.Co
 
 	if err := handler(ctx, task); err != nil {
 		log.Printf("task [%s] failed", task.ID)
-		s.broker.FailOneTask("default", task.ID, time.Now().Add(task.Retention))
+		s.broker.FailTask(task.ID, time.Now().Add(task.Retention), task.Queue)
 		return
 	}
 
 	log.Printf("task [%s] succeeded", task.ID)
-	s.broker.SucceedOneTask("default", task.ID, time.Now().Add(task.Retention))
+	s.broker.SucceedTask(task.ID, time.Now().Add(task.Retention), task.Queue)
 }

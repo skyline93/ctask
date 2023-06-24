@@ -3,9 +3,17 @@ package ctask
 import "time"
 
 type Broker interface {
-	InitQueues(queues ...string) error
-	EnqueueOneTask(queue string, task *Task, retention time.Duration) error
-	DequeueOneTask(queue string) (*Task, error)
-	SucceedOneTask(queue string, taskId string, expireat time.Time) error
-	FailOneTask(queue string, taskId string, expireat time.Time) error
+	EnqueueTask(task *Task, retention time.Duration, queue Queue) error
+	DequeueTask(queues ...Queue) (*Task, error)
+	SucceedTask(taskId string, expireat time.Time, queue Queue) error
+	FailTask(taskId string, expireat time.Time, queue Queue) error
+}
+
+type Queue struct {
+	Name     string
+	priority int
+}
+
+func (q Queue) String() string {
+	return q.Name
 }

@@ -7,6 +7,11 @@ import (
 	"github.com/google/uuid"
 )
 
+const (
+	DefaultQueue     = "default"
+	DefaultRetention = time.Duration(time.Hour * 24)
+)
+
 type OptionType int
 
 const (
@@ -48,7 +53,9 @@ type option struct {
 
 func composeOptions(opts ...Option) (option, error) {
 	res := option{
-		taskID: uuid.New().String(),
+		taskID:    uuid.New().String(),
+		queue:     DefaultQueue,
+		retention: DefaultRetention,
 	}
 
 	for _, opt := range opts {

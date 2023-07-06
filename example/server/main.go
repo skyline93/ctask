@@ -10,13 +10,13 @@ import (
 
 func main() {
 	ctx := context.Background()
-	broker := ctask.NewRDSBroker(ctx, &redis.Options{
-		Addr: "localhost:6379",
+	broker := ctask.NewRDBBroker(ctx, &redis.Options{
+		Addr: "127.0.0.1:6379",
 		DB:   0,
 	})
 
 	srv := ctask.NewServer(broker, ctask.Config{
-		Concurrency: 5,
+		Concurrency: 100,
 		Queues: map[string]int{
 			"critical": 6,
 			"default":  3,
@@ -24,6 +24,7 @@ func main() {
 		},
 	})
 	srv.HandleFunc(tasks.TypeEmailDelivery, tasks.HandleEmailDeliveryTask)
+	srv.Handle(tasks.TypeImageResize, tasks.NewImageProcessor())
 
 	srv.Run(ctx)
 }

@@ -1,6 +1,9 @@
 package ctask
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 const (
 	TaskStatusQueue     = "queued"
@@ -38,4 +41,14 @@ type TaskInfo struct {
 	Type      string
 	Queue     string
 	Retention time.Duration
+}
+
+type Handler interface {
+	ProcessTask(context.Context, *Task) error
+}
+
+type HandlerFunc func(context.Context, *Task) error
+
+func (fn HandlerFunc) ProcessTask(ctx context.Context, t *Task) error {
+	return fn(ctx, t)
 }

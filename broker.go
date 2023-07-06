@@ -6,6 +6,7 @@ import (
 )
 
 type Broker interface {
+	Close()	error
 	Enqueue(ctx context.Context, msg *TaskMessage) error
 	Dequeue(qnames ...string) (*TaskMessage, error)
 	SucceedTask(taskId string, expireat time.Time, qname string) error

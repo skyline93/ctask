@@ -14,23 +14,19 @@ const globPrefix = "ctask"
 
 var ErrEmptyQueue = errors.New("empty queue")
 
-type RDS struct {
-	client *redis.Client
-}
-
-func NewRDS(opt *redis.Options) *RDS {
-	client := redis.NewClient(opt)
-	return &RDS{client: client}
-}
-
-type RDSBroker struct {
+type RDBBroker struct {
 	ctx context.Context
-	rds *RDS
+	rdb *redis.Client
 }
 
-func NewRDSBroker(ctx context.Context, opt *redis.Options) *RDSBroker {
-	rds := NewRDS(opt)
-	return &RDSBroker{ctx: ctx, rds: rds}
+func NewRDBBroker(ctx context.Context, opt *redis.Options) *RDBBroker {
+	client := redis.NewClient(opt)
+
+	return &RDBBroker{ctx: ctx, rdb: client}
+}
+
+func (b *RDBBroker) Close() error {
+	return b.rdb.Close()
 }
 
 var enqueueCmd = redis.NewScript(`
@@ -46,7 +42,7 @@ redis.call("ZADD", KEYS[2], ARGV[2], ARGV[3])
 return 0
 `)
 
-func (b *RDSBroker) Enqueue(ctx context.Context, msg *TaskMessage) error {
+func (b *RDBBroker) Enqueue(ctx context.Context, msg *TaskMessage) error {
 	encoded, err := EncodeMessage(msg)
 	if err != nil {
 		return err
@@ -61,7 +57,7 @@ func (b *RDSBroker) Enqueue(ctx context.Context, msg *TaskMessage) error {
 		time.Now().UnixNano(),
 		msg.ID,
 	}
-	result, err := enqueueCmd.Run(b.ctx, b.rds.client, keys, args...).Result()
+	result, err := enqueueCmd.Run(b.ctx, b.rdb, keys, args...).Result()
 	if err != nil {
 		return err
 	}
@@ -102,7 +98,7 @@ local result = redis.call("HMGET", key, "msg", "state", "enqueue_since")
 return result
 `)
 
-func (b *RDSBroker) Dequeue(qnames ...string) (*TaskMessage, error) {
+func (b *RDBBroker) Dequeue(qnames ...string) (*TaskMessage, error) {
 	for _, qname := range qnames {
 		msg, err := b.dequeue(qname)
 		if err != nil {
@@ -119,7 +115,7 @@ func (b *RDSBroker) Dequeue(qnames ...string) (*TaskMessage, error) {
 	return nil, ErrEmptyQueue
 }
 
-func (b *RDSBroker) dequeue(qname string) (*TaskMessage, error) {
+func (b *RDBBroker) dequeue(qname string) (*TaskMessage, error) {
 	keys := []string{
 		fmt.Sprintf("%s:{%s}:%s", globPrefix, qname, TaskStatusQueue),
 		fmt.Sprintf("%s:{%s}:%s", globPrefix, qname, TaskStatusRunning),
@@ -130,7 +126,7 @@ func (b *RDSBroker) dequeue(qname string) (*TaskMessage, error) {
 		fmt.Sprintf("%s:{%s}:task:", globPrefix, qname),
 	}
 
-	res, err := dequeueCmd.Run(b.ctx, b.rds.client, keys, args...).Result()
+	res, err := dequeueCmd.Run(b.ctx, b.rdb, keys, args...).Result()
 	if err != nil && err != redis.Nil {
 		return nil, err
 	}
@@ -155,7 +151,7 @@ redis.call("EXPIREAT", KEYS[2], ARGV[3])
 return 0
 `)
 
-func (b *RDSBroker) completeTask(taskId string, status string, expireat time.Time, qname string) error {
+func (b *RDBBroker) completeTask(taskId string, status string, expireat time.Time, qname string) error {
 	keys := []string{
 		fmt.Sprintf("%s:{%s}:%s", globPrefix, qname, TaskStatusRunning),
 		fmt.Sprintf("%s:{%s}:task:%s", globPrefix, qname, taskId),
@@ -167,7 +163,7 @@ func (b *RDSBroker) completeTask(taskId string, status string, expireat time.Tim
 		expireat.Unix(),
 	}
 
-	result, err := completeCmd.Run(b.ctx, b.rds.client, keys, args...).Result()
+	result, err := completeCmd.Run(b.ctx, b.rdb, keys, args...).Result()
 	if err != nil {
 		return err
 	}
@@ -179,10 +175,10 @@ func (b *RDSBroker) completeTask(taskId string, status string, expireat time.Tim
 	return nil
 }
 
-func (b *RDSBroker) SucceedTask(taskId string, expireat time.Time, qname string) error {
+func (b *RDBBroker) SucceedTask(taskId string, expireat time.Time, qname string) error {
 	return b.completeTask(taskId, TaskStatusSucceeded, expireat, qname)
 }
 
-func (b *RDSBroker) FailTask(taskId string, expireat time.Time, qname string) error {
+func (b *RDBBroker) FailTask(taskId string, expireat time.Time, qname string) error {
 	return b.completeTask(taskId, TaskStatusFailed, expireat, qname)
 }

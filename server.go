@@ -4,20 +4,23 @@ import (
 	"context"
 	"errors"
 	"log"
+	"math/rand"
 	"sort"
 	"time"
 )
 
 type Config struct {
-	Concurrency int
-	Queues      map[string]int
+	Concurrency    int
+	Queues         map[string]int
+	StrictPriority bool
 }
 
 type Server struct {
-	broker      Broker
-	mux         map[string]func(context.Context, *Task) error
-	sema        chan struct{}
-	queueConfig map[string]int
+	broker         Broker
+	mux            map[string]Handler
+	sema           chan struct{}
+	queueConfig    map[string]int
+	strictPriority bool
 }
 
 func NewServer(broker Broker, cfg Config) *Server {
@@ -27,18 +30,52 @@ func NewServer(broker Broker, cfg Config) *Server {
 	}
 
 	return &Server{
-		broker:      broker,
-		mux:         make(map[string]func(context.Context, *Task) error),
-		sema:        make(chan struct{}, cfg.Concurrency),
-		queueConfig: queues,
+		broker:         broker,
+		mux:            make(map[string]Handler),
+		sema:           make(chan struct{}, cfg.Concurrency),
+		queueConfig:    queues,
+		strictPriority: cfg.StrictPriority,
 	}
 }
 
 func (s *Server) HandleFunc(pattern string, handler func(context.Context, *Task) error) {
+	s.mux[pattern] = HandlerFunc(handler)
+}
+
+func (s *Server) Handle(pattern string, handler Handler) {
 	s.mux[pattern] = handler
 }
 
-func (s *Server) queues() []string {
+func uniq(names []string, l int) []string {
+	var res []string
+	seen := make(map[string]struct{})
+	for _, s := range names {
+		if _, ok := seen[s]; !ok {
+			seen[s] = struct{}{}
+			res = append(res, s)
+		}
+		if len(res) == l {
+			break
+		}
+	}
+	return res
+}
+
+func (s *Server) weightedQueues() []string {
+	var names []string
+
+	for qname, priority := range s.queueConfig {
+		for i := 0; i < priority; i++ {
+			names = append(names, qname)
+		}
+	}
+
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	r.Shuffle(len(names), func(i, j int) { names[i], names[j] = names[j], names[i] })
+	return uniq(names, len(s.queueConfig))
+}
+
+func (s *Server) strictQueues() []string {
 	names := make([]string, 0, len(s.queueConfig))
 
 	for qname := range s.queueConfig {
@@ -50,6 +87,14 @@ func (s *Server) queues() []string {
 	})
 
 	return names
+}
+
+func (s *Server) queues() []string {
+	if s.strictPriority {
+		return s.strictQueues()
+	}
+
+	return s.weightedQueues()
 }
 
 func (s *Server) Run(ctx context.Context) {
@@ -84,7 +129,7 @@ func (s *Server) Run(ctx context.Context) {
 	}
 }
 
-func (s *Server) handle(ctx context.Context, msg *TaskMessage, handler func(context.Context, *Task) error) {
+func (s *Server) handle(ctx context.Context, msg *TaskMessage, handler Handler) {
 	defer func() {
 		if err := recover(); err != nil {
 			log.Printf("handle panic!!! %s", err)
@@ -93,7 +138,7 @@ func (s *Server) handle(ctx context.Context, msg *TaskMessage, handler func(cont
 	}()
 
 	task := newTask(msg.Type, msg.Payload)
-	if err := handler(ctx, task); err != nil {
+	if err := handler.ProcessTask(ctx, task); err != nil {
 		log.Printf("task [%s] failed", msg.ID)
 		s.broker.FailTask(msg.ID, time.Now().Add(time.Second*time.Duration(msg.Retention)), msg.Queue)
 		return

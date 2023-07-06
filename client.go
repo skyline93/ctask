@@ -13,6 +13,8 @@ func NewClient(broker Broker) *Client {
 	return &Client{broker: broker}
 }
 
+func (c *Client) Close() error { return c.broker.Close() }
+
 func (c *Client) Enqueue(ctx context.Context, task *Task, opts ...Option) (*TaskInfo, error) {
 	opt, err := composeOptions(opts...)
 	if err != nil {
